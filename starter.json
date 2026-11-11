@@ -1,0 +1,21 @@
+{
+  "name": "Sky Joust",
+  "genre": "fighting",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–6",
+  "hook": "Flap higher. Lance lower knights. Grab their eggs.",
+  "how": "Flap to fly your knight on its giant bird. When two knights crash, the higher lance wins and the loser drops an egg: grab it before it hatches or they're back. Stay out of the lava and its grabbing hand. Last knight flying wins the round; first to 5 rounds wins.",
+  "controls": "Arrows or A/D to steer, Space, Z or Up to flap; on touch, the arrow buttons and Flap",
+  "uses": [
+    ["Leaderboard", "Matches won, shown on the results card."],
+    ["Bots", "Bots fill the empty seats, and someone who joins takes a bot's seat next round."],
+    ["Host-run rounds", "The host's browser keeps the rounds and the score; if it leaves, the next player takes over."],
+    ["Live sync", "Every knight flies for everyone at once; whoever ends up lower calls their own fall."]
+  ],
+  "ideas": [
+    "Add a pterodactyl that hunts whoever is winning",
+    "Make the lava rise a little every round",
+    "Let me pick my bird's color before the match"
+  ]
+}
