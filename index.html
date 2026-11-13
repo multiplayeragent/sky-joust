@@ -25,6 +25,7 @@
   .card h2 { margin: 0 0 4px; font-size: 28px; color: #ffd166; } .card h3 { margin: 14px 0 4px; font-size: 13px; color: #ff9f6b; text-align: left; text-transform: uppercase; letter-spacing: .06em; }
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; text-align: left; min-height: 30px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; } .card li.me { color: #ffd166; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; } /* a message, not a ranked line */
   .card p { margin: 10px 0 0; font-size: 13px; opacity: .75; }
   button.go { width: 100%; min-height: 48px; margin-top: 16px; border: 0; border-radius: 12px; background: #ffd166; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   .pad { position: fixed; bottom: calc(max(12px, env(safe-area-inset-bottom)) + 20px); touch-action: none; display: flex; gap: 12px; }
@@ -47,7 +48,7 @@
 <div id="over" hidden><div class="card">
   <h2 id="overTitle"></h2><div id="overSub"></div>
   <h3>This match</h3><ol id="results"></ol>
-  <h3>Most matches won</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Most matches won</h3><ol id="board"><li class="note">Loading…</li></ol>
   <button class="go" id="again">Play again</button><p id="next"></p>
 </div></div>
 <script>
@@ -102,6 +103,7 @@ const CONFIG = {
   maxSpeed: 250,        // px/s
   level: 6,             // lances within this many px of each other just bounce
   hatchMs: 5000,        // an egg nobody grabs hatches after this
+  eggSafeMs: 450,       // a new egg drops clear for this long before anyone can grab it (or the lancer always would, at once)
   invMs: 1500,          // ms a hatched knight can't be unhorsed
   startSafeMs: 2000,    // ms nobody can be unhorsed when a round starts
   lavaY: 560,           // the lava's surface
@@ -230,7 +232,7 @@ const grabbedByHand = (k, m) => { const h = handNow(m); return !!h && !k.ground 
 /** Do two riders crash? */
 const crash = (a, b) => Math.abs(dxWrap(a.x, b.x)) < KW - 6 && Math.abs(a.y - b.y) < KH - 6;
 /** Turn a rider into an egg where it was. */
-function toEgg(k) { k.s = EGG; k.vy = -180; k.vx *= 0.4; k.ground = false; k.hatchAt = Date.now() + CONFIG.hatchMs; }
+function toEgg(k) { k.s = EGG; k.vy = -180; k.vx *= 0.4; k.ground = false; k.hatchAt = Date.now() + CONFIG.hatchMs; k.grabAt = Date.now() + CONFIG.eggSafeMs; }
 function hatch(k) { k.s = RIDE; k.vy = -260; k.ground = false; k.inv = Date.now() + CONFIG.invMs; }
 
 /** The bot brain: climb above the nearest rider and dive on it; grab eggs; stay out of the lava. */
@@ -251,7 +253,8 @@ function botControl(b, all, t) {
   }
   wantY = Math.min(wantY, CONFIG.lavaY - 70);
   const ledge = LEDGES.find((p) => b.x > p.x1 - 20 && b.x < p.x2 + 20 && (wantY < b.y - 20 ? p.y < b.y - KH + 4 && p.y > wantY - KH : wantY > b.y + 20 && p.y >= b.y && p.y < wantY));
-  if (ledge) ctl.x = b.x - ledge.x1 < ledge.x2 - b.x ? -1 : 1; // a ledge in the way up or down: go around its nearer end
+  if (ledge) { b.detour = ledge.x1 <= 0 ? 1 : ledge.x2 >= AW ? -1 : b.x - ledge.x1 < ledge.x2 - b.x ? -1 : 1; b.detourUntil = t + 450; } // a ledge in the way up or down: go around its nearer end (the side ledges join across the wrap: leave by the inner end)
+  if (t < (b.detourUntil || 0)) ctl.x = b.detour; // ... and keep going until well clear of it
   if (b.y > wantY && t > (b.flapAt || 0)) { ctl.flap = true; b.flapAt = t + (CONFIG.botFlap[0] + Math.random() * (CONFIG.botFlap[1] - CONFIG.botFlap[0])) * 1000 * (b.y > CONFIG.lavaY - 90 ? 0.6 : 1); }
   if (t < (b.dazeUntil || 0)) ctl.x = 0; // a slow moment now and then: bots aren't perfect
   else if (Math.random() < 0.003) b.dazeUntil = t + 400;
@@ -342,13 +345,14 @@ function botTick(b, dt, m, all) {
     if (o.id === b.id || o.s !== RIDE || !crash(b, o) || t < b.inv) continue;
     if (b.y > o.y + CONFIG.level) { toEgg(b); b.unN++; const msg = { by: o.id, n: b.unN, x: Math.round(b.x), y: Math.round(b.y) }; applyUnhorsed(b.id, msg); net.send("unhorsed", { ...msg, v: b.id }); onUnhorsed(b.id, msg); break; }
     if (Math.abs(b.y - o.y) <= CONFIG.level) clash(b, o);
+    else if (b.y < o.y) b.vy = Math.min(b.vy, -120); // won from above: a little hop, like a player
   }
 }
 /** An egg: falls, bounces, hatches unless a rider grabs it first (lava or the hand take it too). */
 function eggTick(k, dt, m, all, onOut) {
   move(k, dt, 0.35); k.vx *= Math.pow(0.3, dt);
   if (m.ph !== "fight") return;
-  const grab = all.find((o) => o.id !== k.id && o.s === RIDE && Math.abs(dxWrap(k.x, o.x)) < 30 && Math.abs(o.y - k.y) < 34);
+  const grab = Date.now() >= (k.grabAt || 0) && all.find((o) => o.id !== k.id && o.s === RIDE && Math.abs(dxWrap(k.x, o.x)) < 30 && Math.abs(o.y - k.y) < 34);
   if (grab || inLava(k) || grabbedByHand(k, m)) { k.s = OUT; burst(k.x, k.y - 10, grab ? "#fff6d5" : "#ff7a1a", 16); if (onOut) onOut(grab); return; }
   if (Date.now() >= k.hatchAt) { hatch(k); burst(k.x, k.y - 10, k.color, 14); }
 }
@@ -441,6 +445,7 @@ function syncViews(dt, m) {
     if (raw !== v.raw) {
       if (v.s === RIDE && f.s === EGG) burst(v.x, v.y - 20, "#ffd166", 10);
       if (v.s === EGG && f.s === OUT) burst(v.x, v.y - 10, "#fff6d5", 14); // an egg grabbed (or lost to the lava)
+      if (v.s === RIDE && f.s === OUT && v.r === f.r) burst(v.x, Math.min(v.y, CONFIG.lavaY), "#ff7a1a", 20); // a rider lost to the lava or the hand
       Object.assign(v, { tx: f.x, ty: f.y, vx: f.vx, vy: f.vy, f: f.f, s: f.s, r: f.r, fl: f.fl, g: f.g, iv: f.iv, name: f.name, color: f.color, raw, at: now });
       if (v.x === undefined || Math.abs(dxWrap(v.x, v.tx)) > 200 || Math.abs(v.ty - v.y) > 200) { v.x = v.tx; v.y = v.ty; } // a new round: jump there
       if (f.fl) v.flapT = 0.28;
@@ -616,11 +621,11 @@ function hud(m) {
 }
 function showBoard(won) {
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = "<li class='note'>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class='note'>Loading…</li>";
   (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No wins yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li class='note'>No wins yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class='note'>Couldn't load the leaderboard.</li>"; });
 }
 $("again").onclick = () => { if (isHost()) host.again = true; else net.send("again", {}); };
 let audio = null; // made on the first tap or key (browsers block sound before that)
